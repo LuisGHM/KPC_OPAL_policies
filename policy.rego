@@ -1,25 +1,25 @@
 package app.rbac
 
-# Regra padrão: nega acesso
+# Regra padrão: acesso negado
 default allow = false
 
-# Regra para permitir acesso
+# Regra de autorização
 allow {
     some role
-    input.user in roles[role].users
-    input.action in roles[role].actions
-    input.object in roles[role].objects
+    input.user == roles[role].users[_]  # Verifica se o usuário pertence à lista
+    input.action == roles[role].actions[_]  # Verifica se a ação é permitida
+    input.object == roles[role].objects[_]  # Verifica se o objeto é permitido
 }
 
-# Definição das funções (roles) dinâmicas com base nos dados sincronizados
+# Definição de funções
 roles = {
     "admin": {
-        "users": [u | data.employees[_].is_superuser == true; u = data.employees[_].full_name],
+        "users": ["alice"],
         "actions": ["create", "read", "update", "delete"],
         "objects": ["*"]
     },
     "employee": {
-        "users": [u | data.employees[_].is_staff == true; u = data.employees[_].full_name],
+        "users": ["bob"],
         "actions": ["read"],
         "objects": ["finance"]
     }

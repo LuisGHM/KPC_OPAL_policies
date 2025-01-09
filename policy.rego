@@ -6,9 +6,9 @@ default allow = false
 # Regra que permite acesso com base em funções, ações e objetos
 allow {
     some role
-    input.user in roles[role].users
-    input.action in roles[role].actions
-    input.object in roles[role].objects
+    input.user == roles[role].users[_]
+    input.action == roles[role].actions[_]
+    input.object == roles[role].objects[_]
 }
 
 # Funções dinâmicas carregadas dos dados sincronizados

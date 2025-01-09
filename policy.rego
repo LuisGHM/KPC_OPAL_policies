@@ -1,7 +1,9 @@
 package app.rbac
 
+# Regra padrão: nega acesso
 default allow = false
 
+# Regra para permitir acesso
 allow {
     some role
     input.user in roles[role].users
@@ -9,6 +11,7 @@ allow {
     input.object in roles[role].objects
 }
 
+# Definição das funções (roles) dinâmicas com base nos dados sincronizados
 roles = {
     "admin": {
         "users": [u | data.employees[_].is_superuser == true; u = data.employees[_].full_name],

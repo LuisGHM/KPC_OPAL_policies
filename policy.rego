@@ -1,45 +1,34 @@
-package app.rbac
+package policy
 
-# Regra padrão: acesso negado
 default allow = false
 
-# Debugging: visualizar os usuários categorizados
-debug_admin = {employee.full_name |
-    some employee
-    employee = data.employees.result[_]
-    employee.is_superuser == true
-}
-
-debug_staff = {employee.full_name |
-    some employee
-    employee = data.employees.result[_]
-    employee.is_staff == true
-    employee.is_superuser == false
-}
-
-# Informação de depuração detalhada
-debug_info = {
-    "input_user": input.user,
-    "input_action": input.action,
-    "admin_users": debug_admin,
-    "staff_users": debug_staff,
-    "employees_data_count": count(data.employees.result),
-    "employees_data": data.employees.result
-}
-
-# Regras de autorização
+# Regras para ações
 allow {
-    some employee
-    employee = data.employees.result[_]
-    employee.full_name == input.user
-    employee.is_superuser == true
+    input.method == "GET"  # Leitura é permitida para todos os usuários
+    user_is_admin_or_staff
 }
 
 allow {
-    some employee
-    employee = data.employees.result[_]
-    employee.full_name == input.user
-    employee.is_staff == true
-    employee.is_superuser == false
-    input.action == "read"
+    user_is_admin  # Administradores podem realizar todas as ações
+}
+
+# Condição para verificar se o usuário é administrador
+user_is_admin {
+    user := input.user
+    user.is_superuser == true
+}
+
+# Condição para verificar se o usuário é staff
+user_is_staff {
+    user := input.user
+    user.is_staff == true
+}
+
+# Condição para verificar se o usuário é admin ou staff
+user_is_admin_or_staff {
+    user_is_admin
+}
+
+user_is_admin_or_staff {
+    user_is_staff
 }

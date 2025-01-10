@@ -3,22 +3,22 @@ package employees
 # Regras de RBAC
 default allow = false
 
-allow {
-	input.is_superuser == true
+allow if {
+    input.is_superuser == true
 }
 
-allow {
-	input.is_staff == true
-	input.allowed_actions[_] == "read"
+allow if {
+    input.is_staff == true
+    input.allowed_actions[_] == "read"
 }
 
-deny {
-	input.is_staff == true
-	not allow
+deny if {
+    input.is_staff == true
+    not allow
 }
 
 # Função utilitária
-hasPermission(grants, roles) {
-	some i
-	grants[i] == roles[i]
+hasPermission(grants, roles) if {
+    some i
+    grants[i] == roles[i]
 }

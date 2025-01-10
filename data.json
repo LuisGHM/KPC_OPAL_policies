@@ -3,7 +3,7 @@
     "alice": {
       "roles": ["admin"],
       "location": {
-        "country": "US",
+        "country": "BR",
         "ip": "8.8.8.8"
       }
     },

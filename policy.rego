@@ -17,12 +17,14 @@ debug_staff = {employee.full_name |
     employee.is_superuser == false
 }
 
-# Informação de depuração
+# Informação de depuração detalhada
 debug_info = {
     "input_user": input.user,
     "input_action": input.action,
     "admin_users": debug_admin,
-    "staff_users": debug_staff
+    "staff_users": debug_staff,
+    "employees_data_count": count(data.employees.result),
+    "employees_data": data.employees.result
 }
 
 # Regras de autorização

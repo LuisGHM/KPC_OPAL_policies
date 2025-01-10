@@ -1,5 +1,7 @@
 package employees
 
+import future.keywords.in
+
 default allow = false
 
 # Permite tudo para superusuários

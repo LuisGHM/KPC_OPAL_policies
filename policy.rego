@@ -5,22 +5,27 @@ default allow = false
 
 # Regra de autorização
 allow {
-    some role
-    input.user == roles[role].users[_]  # Verifica se o usuário pertence à lista
-    input.action == roles[role].actions[_]  # Verifica se a ação é permitida
-    input.object == roles[role].objects[_]  # Verifica se o objeto é permitido
+    input.user == "admin"  # Verifica se o usuário é administrador
+    input.action != ""     # Administradores podem executar qualquer ação
 }
 
-# Definição de funções
-roles = {
-    "admin": {
-        "users": ["alice"],
-        "actions": ["create", "read", "update", "delete"],
-        "objects": ["*"]
-    },
-    "employee": {
-        "users": ["bob"],
-        "actions": ["read"],
-        "objects": ["finance"]
-    }
+allow {
+    input.user == staff_users[_]  # Verifica se o usuário está na lista de funcionários
+    input.action == "read"        # Funcionários só podem realizar ações de leitura
+}
+
+# Dados dinâmicos de roles a partir da API OPAL
+staff_users = {user |
+    some employee
+    employee = data.employees.result[_]
+    employee.is_staff == true
+    employee.is_superuser == false  # Garante que não são superusuários
+    user = employee.full_name
+}
+
+admin_users = {user |
+    some employee
+    employee = data.employees.result[_]
+    employee.is_superuser == true
+    user = employee.full_name
 }

@@ -17,12 +17,27 @@ debug_staff = {employee.full_name |
     employee.is_superuser == false
 }
 
+# Informação de depuração
+debug_info = {
+    "input_user": input.user,
+    "input_action": input.action,
+    "admin_users": debug_admin,
+    "staff_users": debug_staff
+}
+
 # Regras de autorização
 allow {
-    input.user == debug_admin[_]  # Administradores têm acesso total
+    some employee
+    employee = data.employees.result[_]
+    employee.full_name == input.user
+    employee.is_superuser == true
 }
 
 allow {
-    input.user == debug_staff[_]  # Funcionários têm acesso limitado
-    input.action == "read"        # Apenas ações de leitura
+    some employee
+    employee = data.employees.result[_]
+    employee.full_name == input.user
+    employee.is_staff == true
+    employee.is_superuser == false
+    input.action == "read"
 }

@@ -1,34 +1,30 @@
-package policy
+package policies
 
 default allow = false
 
-# Regras para ações
+# Regra para verificar se o usuário é admin
+is_admin {
+    input.user.is_superuser == true
+}
+
+# Regra para verificar se o usuário é staff
+is_staff {
+    input.user.is_staff == true
+    input.user.is_superuser == false
+}
+
+# Permitir admins fazerem tudo
 allow {
-    input.method == "GET"  # Leitura é permitida para todos os usuários
-    user_is_admin_or_staff
+    is_admin
 }
 
+# Permitir staff apenas ler
 allow {
-    user_is_admin  # Administradores podem realizar todas as ações
+    is_staff
+    input.action == "read"
 }
 
-# Condição para verificar se o usuário é administrador
-user_is_admin {
-    user := input.user
-    user.is_superuser == true
-}
-
-# Condição para verificar se o usuário é staff
-user_is_staff {
-    user := input.user
-    user.is_staff == true
-}
-
-# Condição para verificar se o usuário é admin ou staff
-user_is_admin_or_staff {
-    user_is_admin
-}
-
-user_is_admin_or_staff {
-    user_is_staff
+# Negar outras ações
+deny {
+    not allow
 }

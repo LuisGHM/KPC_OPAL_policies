@@ -1,30 +1,21 @@
-package app.rbac
+package employees
 
-# Por padrão, negar acesso
 default allow = false
 
-# Permitir se for superuser
+# Permite tudo para superusuários
 allow {
-    some user_super
-    user_super_role := input.user
-    is_superuser(user_super)
+    input.is_superuser == true
 }
 
-# Permitir leitura para staff
+# Define restrições para `is_staff`
 allow {
-    some user_staff
-    user_staff_role := input.user
-    is_staff(user_staff)
-    input.action == "read"
+    input.is_staff == true
+    some action in input.allowed_actions
+    action == "read"  # Exemplo de ação permitida
 }
 
-# Funções auxiliares para verificar permissões
-is_superuser(user_super) {
-    data.result[_].full_name == user_super
-    data.result[_].is_superuser == true
-}
-
-is_staff(user_staff) {
-    data.result[_].full_name == user_staff
-    data.result[_].is_staff == true
+# Bloqueia qualquer outra ação para `is_staff`
+deny {
+    input.is_staff == true
+    not allow
 }

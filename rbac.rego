@@ -5,26 +5,26 @@ default allow = false
 
 # Permitir se for superuser
 allow {
-    some u
-    u := input.user
-    is_superuser(u)
+    some user_super
+    user_super := input.user
+    is_superuser(user_super)
 }
 
 # Permitir leitura para staff
 allow {
-    some u
-    u := input.user
-    is_staff(u)
+    some user_staff
+    user_staff := input.user
+    is_staff(user_staff)
     input.action == "read"
 }
 
 # Funções auxiliares para verificar permissões
-is_superuser(u) {
-    data.result[_].full_name == u
+is_superuser(user_super) {
+    data.result[_].full_name == user_super
     data.result[_].is_superuser == true
 }
 
-is_staff(u) {
-    data.result[_].full_name == u
+is_staff(user_staff) {
+    data.result[_].full_name == user_staff
     data.result[_].is_staff == true
 }

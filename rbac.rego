@@ -2,7 +2,9 @@ package employees
 
 import future.keywords.in
 
+# Regras principais
 default allow = false
+default deny = false
 
 # Permite tudo para superusuários
 allow {
@@ -16,7 +18,7 @@ allow {
     action == "read"  # Exemplo de ação permitida
 }
 
-# Bloqueia qualquer outra ação para `is_staff`
+# Define negação explícita para casos não permitidos
 deny {
     input.is_staff == true
     not allow

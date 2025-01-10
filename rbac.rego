@@ -6,14 +6,14 @@ default allow = false
 # Permitir se for superuser
 allow {
     some user_super
-    user_super := input.user
+    user_super_role := input.user
     is_superuser(user_super)
 }
 
 # Permitir leitura para staff
 allow {
     some user_staff
-    user_staff := input.user
+    user_staff_role := input.user
     is_staff(user_staff)
     input.action == "read"
 }

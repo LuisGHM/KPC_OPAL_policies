@@ -1,23 +1,21 @@
 package policy
 
-import future.keywords.if
+import rego.v1
 
 # Regras de RBAC
-default allow = false
+default allow := false
 
 allow if {
-	some e
-	e := data.employees[_]
-	e.full_name == input.full_name
-	e.is_superuser == true
+	some emp in data.employees
+	emp.full_name == input.full_name
+	emp.is_superuser == true
 }
 
 allow if {
-	some e
-	e := data.employees[_]
-	e.full_name == input.full_name
-	e.is_staff == true
-	some action
+	some emp in data.employees
+	emp.full_name == input.full_name
+	emp.is_staff == true
+	some action in input.allowed_actions
 	input.allowed_actions[action] == "read"
 }
 

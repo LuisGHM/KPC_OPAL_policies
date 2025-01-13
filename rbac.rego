@@ -5,21 +5,21 @@ import future.keywords.if
 # Regras de RBAC
 default allow = false
 
+# Verifica se a pessoa tem permissão
 allow if {
-	input.is_superuser == true
+    some employee
+    # Encontra o registro do funcionário com o mesmo nome
+    employee := data.employees[_]
+    employee.full_name == input.full_name
+    # Verifica as permissões
+    (
+        employee.is_superuser == true
+        or
+        (employee.is_staff == true and input.allowed_actions[_] == "read")
+    )
 }
 
-allow if {
-	input.is_staff == true
-	input.allowed_actions[_] == "read"
-}
-
+# Bloqueia se não atender às condições acima
 deny if {
-	input.is_staff == true
-	not allow
-}
-
-hasPermission(grants, roles) if {
-	some i
-	grants[i] == roles[i]
+    not allow
 }

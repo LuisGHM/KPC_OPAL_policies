@@ -12,11 +12,9 @@ allow if {
     employee := data.employees[_]
     employee.full_name == input.full_name
     # Verifica as permissões
-    (
-        employee.is_superuser == true
-        or
-        (employee.is_staff == true and input.allowed_actions[_] == "read")
-    )
+    employee.is_superuser == true
+    or
+    (employee.is_staff == true and input.allowed_actions[_] == "read")
 }
 
 # Bloqueia se não atender às condições acima

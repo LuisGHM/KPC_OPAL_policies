@@ -1,14 +1,18 @@
 package policy
 
-# Padrão: negar acesso
+import rego.v1
+
+# Regras de RBAC
 default allow := false
 
-# Usuários com role 4 têm acesso
+# Usuários na role 4 têm acesso total
 allow if {
-    some emp
-    emp := data.employees[_]  # Itera pelos elementos da lista
+    some emp in data.employees
     emp.full_name == input.full_name
-    some r
-    r := emp.roles[_]  # Itera pelos elementos da lista roles
-    r == 4
+    4 in emp.roles
+}
+
+# Negar acesso se nenhuma das condições acima for verdadeira
+deny if {
+    not allow
 }

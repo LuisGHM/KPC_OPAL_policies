@@ -1,11 +1,14 @@
 package policy
 
-# Regras de RBAC baseadas em roles
+# Padrão: negar acesso
 default allow := false
 
-# Usuários com role 4 têm acesso total
+# Usuários com role 4 têm acesso
 allow if {
     some emp in data.employees
     emp.full_name == input.full_name
     4 in emp.roles  # Verifica se o usuário tem a role 4
 }
+
+# Retorna somente o valor de allow
+result = {"allow": allow}

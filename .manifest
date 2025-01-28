@@ -1,1 +1,2 @@
-rbac.rego
+admin_policy.rego
+room_access_policy.rego

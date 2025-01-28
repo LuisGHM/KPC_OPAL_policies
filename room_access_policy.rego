@@ -6,7 +6,7 @@ import future.keywords.in
 default allow := false
 
 # Permitir acesso com base nos dispositivos
-allow_device {
+allow if {
     some emp in data.employees
     emp.id == input.user_id
 
@@ -16,7 +16,7 @@ allow_device {
 }
 
 # Permitir acesso com base nos papéis
-allow_role {
+allow if {
     some emp in data.employees
     emp.id == input.user_id
 
@@ -26,6 +26,3 @@ allow_role {
     some r in emp.roles
     r in device.roles
 }
-
-# Regra principal: Combinação de condições
-allow := allow_device or allow_role

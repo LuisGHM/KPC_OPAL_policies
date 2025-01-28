@@ -6,7 +6,7 @@ import future.keywords.in
 default allow := false
 
 # Permitir acesso se o dispositivo estiver na lista de dispositivos do funcionário
-allow if {
+allow_device if {
 	some emp in data.employees
 	emp.id == input.user_id
 
@@ -15,8 +15,7 @@ allow if {
 	device.id in emp.devices
 }
 
-# Permitir acesso se houver ao menos uma role em comum entre o funcionário e o dispositivo
-allow if {
+allow_role if {
 	some emp in data.employees
 	emp.id == input.user_id
 
@@ -25,4 +24,12 @@ allow if {
 
 	some r in emp.roles
 	r in device.roles
+}
+
+allow if {
+	allow_device
+}
+
+allow if {
+	allow_role
 }

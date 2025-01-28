@@ -26,12 +26,3 @@ allow if {
 	some r in user.roles
 	r in device.roles
 }
-
-# Define explicitamente os resultados
-result := "Liberado" if {
-	allow
-}
-
-result := "Negado" if {
-	not allow
-}

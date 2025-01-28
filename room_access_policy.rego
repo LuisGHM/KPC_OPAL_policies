@@ -1,6 +1,6 @@
 package access
 
-import future.keywords.if
+import rego.v1
 
 # Valor padrão para `allow`
 default allow := false

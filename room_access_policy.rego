@@ -1,5 +1,7 @@
 package access
 
+import future.keywords.in
+
 # Valor padrão para `allow`
 default allow := false
 

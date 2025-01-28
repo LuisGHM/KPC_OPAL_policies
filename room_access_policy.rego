@@ -1,27 +1,34 @@
-package policy.room
+package access
 
-import future.keywords.in
+# Para este exemplo, assume-se que em data.users temos o array de usuários
+# e em data.devices temos o array de dispositivos, como foi fornecido no enunciado.
 
-default allow_room_access := false
+default allow := false
 
-# Verifica acesso direto pelo dispositivo
-allow_room_access if {
-	some emp in data.employees.result
-	emp.full_name == input.full_name
-	input.device in emp.devices
+# Regra que permite quando o device está na lista de devices do usuário
+allow if {
+	some user in data.users
+	user.id == input.user_id
+
+	some device in data.devices
+	device.id == input.device_id
+
+	device.id in user.devices
 }
 
-# Verifica acesso através de roles compartilhadas
-allow_room_access if {
-	some emp in data.employees.result
-	some device in data.devices.result
-	emp.full_name == input.full_name
-	device.id == input.device
+# Regra que permite quando há ao menos uma role em comum entre usuário e dispositivo
+allow if {
+	some user in data.users
+	user.id == input.user_id
 
-	some r in emp.roles
+	some device in data.devices
+	device.id == input.device_id
+
+	some r in user.roles
 	r in device.roles
 }
 
-deny_room_access if {
-	not allow_room_access
-}
+# Resultado final como "Liberado" se allow == true, senão "Negado".
+result := "Liberado" if allow
+
+result := "Negado" if not allow

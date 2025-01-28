@@ -4,7 +4,7 @@ import future.keywords.in
 
 default allow := false
 
-# Regra que permite quando o dispositivo está na lista de dispositivos do usuário
+# Permitir acesso se o dispositivo estiver na lista de dispositivos do usuário
 allow if {
 	some user in data.users.result
 	user.id == input.user_id
@@ -15,7 +15,7 @@ allow if {
 	device.id in user.devices
 }
 
-# Regra que permite quando há ao menos uma role em comum entre usuário e dispositivo
+# Permitir acesso se houver ao menos uma role em comum entre o usuário e o dispositivo
 allow if {
 	some user in data.users.result
 	user.id == input.user_id

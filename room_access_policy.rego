@@ -1,5 +1,7 @@
 package access
 
+import future.keywords.in
+
 # Para este exemplo, assume-se que em data.users temos o array de usuários
 # e em data.devices temos o array de dispositivos, como foi fornecido no enunciado.
 

@@ -1,6 +1,5 @@
 package policy.room
 
-# Importar suporte para `some x in y`
 import future.keywords.in
 
 default allow_room_access := false
@@ -17,7 +16,7 @@ allow_room_access if {
 	some emp in data.employees.result
 	some device in data.devices.result
 	emp.full_name == input.full_name
-	device.name == input.device
+	device.id == input.device
 	some role in emp.roles
 	role in device.roles
 }

@@ -1,0 +1,110 @@
+version: '3.9'  # Definindo a versão do Docker Compose
+
+services:
+  # 🦉 OPAL Server
+  opal_server:
+    image: permitio/opal-server:latest
+    environment:
+      OPAL_POLICY_REPO_MAIN_BRANCH: main
+      OPAL_POLICY_REPO_URL: https://github.com/LuisGHM/KPC_OPAL_policies.git
+      OPAL_POLICY_REPO_POLLING_INTERVAL: 30
+      OPAL_BROADCAST_URI: kafka://kafka:9092  # 🔄 Agora OPAL usa Kafka, e não mais PostgreSQL
+      OPAL_LOG_FORMAT_INCLUDE_PID: 'true'
+      OPAL_LOG_LEVEL: DEBUG
+      OPAL_KAFKA_ENABLED: 'true'
+      OPAL_KAFKA_BROKER: kafka:9092
+      OPAL_KAFKA_TOPICS: EventNotifier  # 🔄 Mudamos para o padrão recomendado
+      OPAL_DATA_CONFIG_SOURCES: '{"config":{"entries":[{"url":"http://host.docker.internal:8000/employees/","topics":["policy_data"],"dst_path":"/employees"},{"url":"http://host.docker.internal:8000/devices/","topics":["policy_data"],"dst_path":"/devices"}]}}'
+      UVICORN_NUM_WORKERS: 4
+    ports:
+      - "7002:7002"
+    networks:
+      - opal_net
+
+  # 🏴‍☠️ OPAL Client
+  opal_client:
+    image: permitio/opal-client:latest
+    environment:
+      OPAL_SERVER_URL: http://opal_server:7002
+      OPAL_LOG_FORMAT_INCLUDE_PID: 'true'
+      OPAL_INLINE_OPA_LOG_FORMAT: http
+      OPAL_LOG_LEVEL: DEBUG
+    ports:
+      - "7766:7000"
+      - "8181:8181"
+    depends_on:
+      - opal_server
+    entrypoint: ["sh", "-c", "./wait-for.sh opal_server:7002 --timeout=20 -- ./start.sh"]
+    networks:
+      - opal_net
+
+  # 🐘 PostgreSQL
+  postgres:
+    image: postgres:15  # Especificando uma versão estável
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}  # Usando variável de ambiente para senha
+      POSTGRES_DB: kpapi
+    ports:
+      - "5432:5432"
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - opal_net
+
+  # 🦘 Apache Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.2.1  # Especificando uma versão estável
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    networks:
+      - opal_net
+
+  kafka:
+    image: confluentinc/cp-server:7.2.1  # Especificando uma versão estável
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+      - kafkadata:/var/lib/kafka/data
+    networks:
+      - opal_net
+
+  # 📡 Debezium para Capturar Mudanças no Banco
+  debezium:
+    image: debezium/connect:2.4  # Especificando uma versão estável
+    depends_on:
+      - postgres
+      - kafka
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: "1"
+      CONFIG_STORAGE_TOPIC: debezium_configs
+      OFFSET_STORAGE_TOPIC: debezium_offsets
+      STATUS_STORAGE_TOPIC: debezium_statuses
+    ports:
+      - "8083:8083"
+    networks:
+      - opal_net
+
+networks:
+  opal_net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  kafkadata:

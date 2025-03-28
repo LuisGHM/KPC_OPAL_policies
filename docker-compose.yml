@@ -70,15 +70,6 @@ services:
         condition: service_healthy
     env_file:
       - .env
-    environment:
-      BOOTSTRAP_SERVERS: ${BOOTSTRAP_SERVERS}
-      GROUP_ID: ${GROUP_ID}
-      CONFIG_STORAGE_TOPIC: ${CONFIG_STORAGE_TOPIC}
-      OFFSET_STORAGE_TOPIC: ${OFFSET_STORAGE_TOPIC}
-      STATUS_STORAGE_TOPIC: ${STATUS_STORAGE_TOPIC}
-      CONFIG_STORAGE_REPLICATION_FACTOR: 1
-      OFFSET_STORAGE_REPLICATION_FACTOR: 1
-      STATUS_STORAGE_REPLICATION_FACTOR: 1
     ports:
       - "8083:8083"
     networks:
@@ -90,21 +81,18 @@ services:
     env_file:
       - .env
     environment:
-      OPAL_POLICY_REPO_MAIN_BRANCH: ${OPAL_POLICY_REPO_MAIN_BRANCH}
-      OPAL_POLICY_REPO_URL: ${OPAL_POLICY_REPO_URL}
-      OPAL_POLICY_REPO_POLLING_INTERVAL: ${OPAL_POLICY_REPO_POLLING_INTERVAL}
+      OPAL_POLICY_REPO_MAIN_BRANCH: main
+      OPAL_POLICY_REPO_URL: "https://github.com/LuisGHM/KPC_OPAL_policies.git"
+      OPAL_POLICY_REPO_POLLING_INTERVAL: 30
       OPAL_BROADCAST_URI: "kafka://${KAFKA_BROKER}"
-
       OPAL_AUTH_PROVIDER: "preshared_key"
       OPAL_SECURITY_ENABLED: "true"
       OPAL_AUTH_MASTER_TOKEN: ${OPAL_AUTH_MASTER_TOKEN}
-
       OPAL_LOG_FORMAT_INCLUDE_PID: "true"
       OPAL_LOG_LEVEL: DEBUG
       OPAL_KAFKA_ENABLED: "true"
       OPAL_KAFKA_BROKER: ${KAFKA_BROKER}
       OPAL_KAFKA_TOPICS: ${TOPICS}
-
       OPAL_DATA_CONFIG_SOURCES: >
         {"config":{"entries":[
         {"url":"http://host.docker.internal:8000/employees/opal-data/","topics":["policy_data"],"dst_path":"/employees"},
@@ -140,14 +128,10 @@ services:
     build: ./kafka_consumer
     container_name: opal11-kafka_consumer
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy  # Adicionado para garantir que o Kafka esteja pronto
     env_file:
       - .env
-    environment:
-      KAFKA_BROKER: ${KAFKA_BROKER}
-      TOPICS: ${TOPICS}
-      OPAL_SERVER_URL: ${OPAL_SERVER_URL}/data/config
-      OPAL_DATASOURCE_TOKEN: ${OPAL_DATASOURCE_TOKEN}
     networks:
       - opal_net
 

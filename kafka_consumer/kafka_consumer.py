@@ -8,7 +8,7 @@ from kafka.errors import NoBrokersAvailable
 # Carregando variáveis de ambiente do .env
 KAFKA_BROKER = os.getenv("KAFKA_BROKER")
 TOPICS = os.getenv("TOPICS").split(",")
-OPAL_SERVER_URL = os.getenv("OPAL_SERVER_URL") + "/data/config"  # Concatenamos aqui como na versão original
+OPAL_SERVER_URL = os.getenv("OPAL_SERVER_URL")  # Concatenamos aqui como na versão original
 OPAL_DATASOURCE_TOKEN = os.getenv("OPAL_DATASOURCE_TOKEN")
 
 # URL do OPA, com valor padrão caso não esteja no .env

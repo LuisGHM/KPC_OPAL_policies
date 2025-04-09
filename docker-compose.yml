@@ -68,8 +68,15 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    env_file:
-      - .env
+    environment:
+      BOOTSTRAP_SERVERS: "kafka:9092"
+      GROUP_ID: "1"
+      CONFIG_STORAGE_TOPIC: "debezium_configs"
+      OFFSET_STORAGE_TOPIC: "debezium_offsets"
+      STATUS_STORAGE_TOPIC: "debezium_statuses"
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
     ports:
       - "8083:8083"
     networks:
@@ -78,25 +85,28 @@ services:
   opal_server:
     image: permitio/opal-server:latest
     container_name: opal11-opal_server
-    env_file:
-      - .env
     environment:
       OPAL_POLICY_REPO_MAIN_BRANCH: main
       OPAL_POLICY_REPO_URL: "https://github.com/LuisGHM/KPC_OPAL_policies.git"
       OPAL_POLICY_REPO_POLLING_INTERVAL: 30
-      OPAL_BROADCAST_URI: "kafka://${KAFKA_BROKER}"
+      OPAL_BROADCAST_URI: "kafka://kafka:9092"
+
+      # ------------------- AUTH SETTINGS -------------------
       OPAL_AUTH_PROVIDER: "preshared_key"
       OPAL_SECURITY_ENABLED: "true"
       OPAL_AUTH_MASTER_TOKEN: ${OPAL_AUTH_MASTER_TOKEN}
+
       OPAL_LOG_FORMAT_INCLUDE_PID: "true"
       OPAL_LOG_LEVEL: DEBUG
       OPAL_KAFKA_ENABLED: "true"
-      OPAL_KAFKA_BROKER: ${KAFKA_BROKER}
-      OPAL_KAFKA_TOPICS: ${TOPICS}
+      OPAL_KAFKA_BROKER: "kafka:9092"
+      OPAL_KAFKA_TOPICS: "EventNotifier.public.Employees_employees,EventNotifier.public.Devices_devices"
+
+      # Exemplo: carrega employees e devices de uma API local (pode ser Django, Flask, etc.)
       OPAL_DATA_CONFIG_SOURCES: >
         {"config":{"entries":[
         {"url":"http://host.docker.internal:8000/employees/opal-data/","topics":["policy_data"],"dst_path":"/employees"},
-        {"url":"http://host.docker.internal:8000/devices/","topics":["policy_data"],"dst_path":"/devices"}
+        {"url":"http://host.docker.internal:8000/devices/opal-data/","topics":["policy_data"],"dst_path":"/devices"}
         ]}}
       UVICORN_NUM_WORKERS: 4
     ports:
@@ -107,13 +117,12 @@ services:
   opal_client:
     image: permitio/opal-client:latest
     container_name: opal11-opal_client
-    env_file:
-      - .env
     environment:
-      OPAL_SERVER_URL: ${OPAL_SERVER_URL}
+      OPAL_SERVER_URL: "http://opal_server:7002"
       OPAL_LOG_FORMAT_INCLUDE_PID: "true"
       OPAL_INLINE_OPA_LOG_FORMAT: "http"
       OPAL_LOG_LEVEL: DEBUG
+      # Use seu client token (se necessário). Se não for usar token no client, pode remover
       OPAL_CLIENT_TOKEN: ${OPAL_CLIENT_TOKEN}
     ports:
       - "7766:7000"
@@ -128,10 +137,14 @@ services:
     build: ./kafka_consumer
     container_name: opal11-kafka_consumer
     depends_on:
-      kafka:
-        condition: service_healthy  # Adicionado para garantir que o Kafka esteja pronto
+      - kafka
     env_file:
-      - .env
+      - .env   # <-- isso carrega todas as variáveis do seu arquivo
+    environment:
+      KAFKA_BROKER: "kafka:9092"
+      TOPICS: "EventNotifier.public.Employees_employees"
+      OPAL_SERVER_URL: "http://opal_server:7002/data/config"
+      OPAL_DATASOURCE_TOKEN: ${OPAL_DATASOURCE_TOKEN}
     networks:
       - opal_net
 

@@ -1,2 +1,4 @@
-kafka-python
-requests
+kafka-python>=2.0.2
+requests>=2.26.0
+cachetools>=5.0.0
+typing-extensions>=4.0.0

@@ -142,7 +142,7 @@ services:
       - .env   # <-- isso carrega todas as variáveis do seu arquivo
     environment:
       KAFKA_BROKER: "kafka:9092"
-      TOPICS: "EventNotifier.public.Employees_employees"
+      TOPICS: "EventNotifier.public.Employees_employees,EventNotifier.public.Devices_devices"
       OPAL_SERVER_URL: "http://opal_server:7002/data/config"
       OPAL_DATASOURCE_TOKEN: ${OPAL_DATASOURCE_TOKEN}
     networks:

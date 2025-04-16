@@ -31,7 +31,7 @@ CACHE_MAX_SIZE = int(os.getenv("CACHE_MAX_SIZE", "1000"))
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "300"))  # 5 minutos
 
 # Cache para armazenar os IDs já verificados no OPA
-user_cache = TTLCache(maxsize=CACHE_MAX_SIZE, ttl=CACHE_TTL_SECONDS)
+entity_cache = TTLCache(maxsize=CACHE_MAX_SIZE, ttl=CACHE_TTL_SECONDS)
 
 def exponential_backoff(retry_count: int, base_delay: int = RETRY_DELAY_SECONDS) -> int:
     """
@@ -72,17 +72,27 @@ def safe_deserializer(x: bytes) -> Optional[Dict[str, Any]]:
         logger.error(f"❌ Erro inesperado ao processar mensagem: {e}")
         return None
 
-def does_user_exist_in_opa(user_id: str) -> bool:
+def determine_entity_type(topic: str) -> str:
     """
-    Verifica se um usuário existe no OPA, usando cache local
+    Determina o tipo de entidade com base no tópico Kafka
     """
+    if "Devices_devices" in topic:
+        return "devices"
+    return "employees"  # Valor padrão
+
+def does_entity_exist_in_opa(entity_id: str, entity_type: str) -> bool:
+    """
+    Verifica se uma entidade existe no OPA, usando cache local
+    """
+    cache_key = f"{entity_type}:{entity_id}"
+    
     # Primeiro verifica no cache
-    if user_id in user_cache:
-        logger.debug(f"📋 Cache hit para usuário {user_id}")
-        return user_cache[user_id]
+    if cache_key in entity_cache:
+        logger.debug(f"📋 Cache hit para {entity_type} {entity_id}")
+        return entity_cache[cache_key]
     
     # Se não estiver no cache, consulta o OPA
-    url = f"{OPA_BASE_URL}/v1/data/employees/{user_id}"
+    url = f"{OPA_BASE_URL}/v1/data/{entity_type}/{entity_id}"
     
     for retry in range(MAX_RETRIES):
         try:
@@ -90,10 +100,10 @@ def does_user_exist_in_opa(user_id: str) -> bool:
             
             if resp.status_code == 200:
                 # Atualiza o cache e retorna
-                user_cache[user_id] = True
+                entity_cache[cache_key] = True
                 return True
             elif resp.status_code == 404:
-                user_cache[user_id] = False
+                entity_cache[cache_key] = False
                 return False
             else:
                 logger.warning(f"⚠️ GET {url} retornou {resp.status_code}: {resp.text}")
@@ -156,9 +166,9 @@ def validate_event(event: Dict[str, Any]) -> bool:
     
     return True
 
-def build_patch_from_event(event: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+def build_patch_from_event(event: Dict[str, Any], topic: str) -> Optional[Dict[str, Any]]:
     """
-    Constrói um JSON Patch a partir do evento Debezium
+    Constrói um JSON Patch a partir do evento Debezium e identifica o tipo de entidade
     """
     if not validate_event(event):
         return None
@@ -168,70 +178,87 @@ def build_patch_from_event(event: Dict[str, Any]) -> Optional[List[Dict[str, Any
     after = payload.get("after", {})
     before = payload.get("before", {})
     primary_key = "id"
-
+    
+    # Identificar qual entidade está sendo alterada com base no tópico
+    entity_type = determine_entity_type(topic)
+    
     # Garante que estamos lidando com objetos válidos
     if not isinstance(after, dict) and not isinstance(before, dict):
         logger.error("❌ Dados 'after' e 'before' inválidos")
         return None
 
+    patch_list = None
+    
     if op_type == "c":  # CREATE
         if not after or primary_key not in after:
-            logger.error("❌ Operação CREATE sem ID válido")
+            logger.error(f"❌ Operação CREATE sem ID válido para {entity_type}")
             return None
         
-        user_id = after.get(primary_key)
-        return [{
+        entity_id = after.get(primary_key)
+        patch_list = [{
             "op": "add",
-            "path": f"/{user_id}",
+            "path": f"/{entity_id}",
             "value": after
         }]
+        logger.info(f"ℹ️ Criando novo {entity_type}: {entity_id}")
 
     elif op_type == "u":  # UPDATE
         if not after or primary_key not in after:
-            logger.error("❌ Operação UPDATE sem ID válido")
+            logger.error(f"❌ Operação UPDATE sem ID válido para {entity_type}")
             return None
         
-        user_id = after.get(primary_key)
-        if does_user_exist_in_opa(user_id):
-            logger.info(f"ℹ️ Atualizando usuário existente: {user_id}")
-            return [{
+        entity_id = after.get(primary_key)
+        if does_entity_exist_in_opa(entity_id, entity_type):
+            logger.info(f"ℹ️ Atualizando {entity_type} existente: {entity_id}")
+            patch_list = [{
                 "op": "replace",
-                "path": f"/{user_id}",
+                "path": f"/{entity_id}",
                 "value": after
             }]
         else:
-            logger.info(f"ℹ️ Usuário não encontrado no OPA, criando: {user_id}")
-            return [{
+            logger.info(f"ℹ️ {entity_type.capitalize()} não encontrado no OPA, criando: {entity_id}")
+            patch_list = [{
                 "op": "add",
-                "path": f"/{user_id}",
+                "path": f"/{entity_id}",
                 "value": after
             }]
 
     elif op_type == "d":  # DELETE
         if not before or primary_key not in before:
-            logger.error("❌ Operação DELETE sem ID válido")
+            logger.error(f"❌ Operação DELETE sem ID válido para {entity_type}")
             return None
         
-        user_id = before.get(primary_key)
-        # Invalidar o cache para este usuário
-        if user_id in user_cache:
-            del user_cache[user_id]
+        entity_id = before.get(primary_key)
+        # Invalidar o cache para esta entidade
+        cache_key = f"{entity_type}:{entity_id}"
+        if cache_key in entity_cache:
+            del entity_cache[cache_key]
             
-        return [{
+        patch_list = [{
             "op": "remove",
-            "path": f"/{user_id}"
+            "path": f"/{entity_id}"
         }]
+        logger.info(f"ℹ️ Removendo {entity_type}: {entity_id}")
 
+    if patch_list:
+        return {
+            "patch": patch_list,
+            "entity_type": entity_type
+        }
+        
     return None
 
-def notify_opal(patch: List[Dict[str, Any]], reason: str = "Debezium event -> incremental patch") -> bool:
+def notify_opal(patch_data: Dict[str, Any], reason: str = "Debezium event -> incremental patch") -> bool:
     """
     Envia o JSON Patch para o OPAL Server com retry e backoff
     """
-    if not patch:
+    if not patch_data or "patch" not in patch_data:
         logger.warning("⚠️ Patch vazio ou inválido, nada enviado ao OPAL.")
         return False
-
+    
+    patch = patch_data["patch"]
+    entity_type = patch_data["entity_type"]
+    
     payload = {
         "id": f"update-{datetime.now().isoformat()}",
         "entries": [
@@ -239,7 +266,7 @@ def notify_opal(patch: List[Dict[str, Any]], reason: str = "Debezium event -> in
                 "url": "",
                 "config": {},
                 "topics": ["policy_data"],
-                "dst_path": "/employees",
+                "dst_path": f"/{entity_type}",
                 "save_method": "PATCH",
                 "data": patch
             }
@@ -258,10 +285,10 @@ def notify_opal(patch: List[Dict[str, Any]], reason: str = "Debezium event -> in
             resp = requests.post(OPAL_SERVER_URL, headers=headers, json=payload, timeout=10)
             
             if resp.status_code in (200, 201, 202, 204):
-                logger.info(f"✅ Servidor OPAL notificado com sucesso. Status: {resp.status_code}")
+                logger.info(f"✅ Servidor OPAL notificado com sucesso para {entity_type}. Status: {resp.status_code}")
                 return True
             else:
-                logger.warning(f"⚠️ Erro ao notificar OPAL. Status: {resp.status_code}, Resposta: {resp.text}")
+                logger.warning(f"⚠️ Erro ao notificar OPAL para {entity_type}. Status: {resp.status_code}, Resposta: {resp.text}")
                 
                 if retry < MAX_RETRIES - 1:
                     delay = exponential_backoff(retry)
@@ -295,15 +322,18 @@ def process_message(message):
         logger.info("📭 Mensagem tombstone recebida (value=None). Ignorando...")
         return
 
-    logger.info(f"📥 Novo evento recebido no tópico {message.topic}")
+    topic = message.topic
+    logger.info(f"📥 Novo evento recebido no tópico {topic}")
     logger.debug(f"Conteúdo do evento: {json.dumps(event, indent=2)}")
     
-    patch = build_patch_from_event(event)
-    if patch:
+    patch_data = build_patch_from_event(event, topic)
+    if patch_data:
         op = event.get('payload', {}).get('op')
-        user_id = (event.get('payload', {}).get('after') or 
+        entity_id = (event.get('payload', {}).get('after') or 
                    event.get('payload', {}).get('before') or 
                    {}).get('id')
+        
+        entity_type = patch_data["entity_type"]
         
         operation_types = {
             'c': 'CREATE',
@@ -312,8 +342,8 @@ def process_message(message):
         }
         
         op_name = operation_types.get(op, 'UNKNOWN')
-        reason = f"OPAL Patch: {op_name} usuário id={user_id}"
-        notify_opal(patch, reason=reason)
+        reason = f"OPAL Patch: {op_name} {entity_type} id={entity_id}"
+        notify_opal(patch_data, reason=reason)
 
 def graceful_shutdown_handler(consumer, stop_event):
     """

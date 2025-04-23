@@ -37,6 +37,10 @@ entity_cache = TTLCache(maxsize=CACHE_MAX_SIZE, ttl=CACHE_TTL_SECONDS)
 device_roles_cache = TTLCache(maxsize=CACHE_MAX_SIZE, ttl=CACHE_TTL_SECONDS)
 # Para armazenar estado completo de cada device vindo de Debezium
 devices_cache: Dict[int, Dict[str, Any]] = {}
+# Cache para relacionamento employee -> roles
+employee_roles_cache = TTLCache(maxsize=CACHE_MAX_SIZE, ttl=CACHE_TTL_SECONDS)
+# Para armazenar estado completo de cada employee vindo de Debezium
+employees_cache: Dict[int, Dict[str, Any]] = {}
 
 
 def exponential_backoff(retry_count: int, base_delay: int = RETRY_DELAY_SECONDS) -> int:
@@ -81,8 +85,69 @@ def determine_entity_type(topic: str) -> str:
         return "devices"
     elif "Devices_devices_roles" in topic:
         return "devices_roles"
-    return "employees"
+    elif "Employees_employees" in topic and "Employees_employees_roles" not in topic:
+        return "employees"
+    elif "Employees_employees_roles" in topic:
+        return "employees_roles"
+    return "unknown"
 
+def process_employee_role_event(event: Dict[str, Any]) -> None:
+    if not validate_event(event):
+        return
+    payload = event["payload"]
+    op_type = payload.get("op")
+    if op_type in ("c", "u"):
+        after = payload["after"]
+        emp_id = after.get("employees_id")
+        role_id = after.get("role_id")
+        if not emp_id or not role_id:
+            logger.warning(f"⚠️ Evento employees_roles sem employees_id ou role_id válidos: {after}")
+            return
+        employee_roles_cache.setdefault(emp_id, set()).add(role_id)
+        logger.info(f"✅ Adicionada role {role_id} ao employee {emp_id} no cache")
+        threading.Timer(1.0, update_employee_in_opal, args=[emp_id]).start()
+    elif op_type == "d":
+        before = payload["before"]
+        emp_id = before.get("employees_id")
+        role_id = before.get("role_id")
+        if emp_id in employee_roles_cache and role_id in employee_roles_cache[emp_id]:
+            employee_roles_cache[emp_id].remove(role_id)
+            logger.info(f"✅ Removida role {role_id} do employee {emp_id} no cache")
+            threading.Timer(1.0, update_employee_in_opal, args=[emp_id]).start()
+
+def fetch_employee_roles(emp_id: int) -> List[int]:
+    return list(employee_roles_cache.get(emp_id, []))
+
+def update_employee_in_opal(emp_id: int) -> None:
+    try:
+        emp_data = employees_cache.get(emp_id)
+        if not emp_data:
+            logger.warning(f"⚠️ Estado de employee {emp_id} não está em cache, pulando update")
+            return
+
+        roles = fetch_employee_roles(emp_id)
+        data = emp_data.copy()
+        data["roles"] = roles
+        logger.info(f"✅ Preparando patch para employee {emp_id} com roles: {roles}")
+
+        # AQUI VOCÊ ESCOLHE ADD vs REPLACE
+        if does_entity_exist_in_opa(emp_id, "employees"):
+            op_type = "replace"
+        else:
+            op_type = "add"
+
+        patch = [{
+            "op": op_type,
+            "path": f"/{emp_id}",
+            "value": data
+        }]
+
+        notify_opal(
+            {"patch": patch, "entity_type": "employees"},
+            reason=f"OPAL Patch: {op_type.upper()} employee {emp_id} roles - Automatic update"
+        )
+    except Exception as e:
+        logger.error(f"❌ Erro ao atualizar employee {emp_id} no OPAL: {e}")
 
 def process_device_role_event(event: Dict[str, Any]) -> None:
     if not validate_event(event):
@@ -182,43 +247,61 @@ def validate_event(event: Dict[str, Any]) -> bool:
 def build_patch_from_event(event: Dict[str, Any], topic: str) -> Optional[Dict[str, Any]]:
     if not validate_event(event):
         return None
-    payload = event['payload']
-    op_type = payload['op']
-    after = payload.get('after', {})
-    before = payload.get('before', {})
-    primary_key = 'id'
+
+    payload = event["payload"]
+    op_type = payload["op"]
+    after = payload.get("after", {}) or {}
+    before = payload.get("before", {}) or {}
+    primary_key = "id"
     entity_type = determine_entity_type(topic)
-    if entity_type == 'devices_roles':
+
+    # processa apenas roles
+    if entity_type == "devices_roles":
         process_device_role_event(event)
         return None
-    # Para devices, atualizar cache e injetar roles do cache
-    if entity_type == 'devices' and op_type in ('c','u'):
+    if entity_type == "employees_roles":
+        process_employee_role_event(event)
+        return None
+
+    # injeta roles em devices
+    if entity_type == "devices" and op_type in ("c", "u"):
         device_id = after.get(primary_key)
-        if device_id:
+        if device_id is not None:
             devices_cache[device_id] = after.copy()
             roles = fetch_device_roles(device_id)
-            after['roles'] = roles
+            after["roles"] = roles
             logger.info(f"✅ Adicionadas {len(roles)} roles ao device {device_id}")
+
+    # injeta roles em employees
+    if entity_type == "employees" and op_type in ("c", "u"):
+        emp_id = after.get(primary_key)
+        if emp_id is not None:
+            employees_cache[emp_id] = after.copy()
+            roles = fetch_employee_roles(emp_id)
+            after["roles"] = roles
+            logger.info(f"✅ Adicionadas {len(roles)} roles ao employee {emp_id}")
+
+    # monta a lista de operações PATCH/ADD/REMOVE
     patch_list = None
-    if op_type == 'c' and after.get(primary_key) is not None:
+    if op_type == "c" and after.get(primary_key) is not None:
         entity_id = after[primary_key]
         patch_list = [{"op": "add", "path": f"/{entity_id}", "value": after}]
-    elif op_type == 'u' and after.get(primary_key) is not None:
+    elif op_type == "u" and after.get(primary_key) is not None:
         entity_id = after[primary_key]
         if does_entity_exist_in_opa(entity_id, entity_type):
             patch_list = [{"op": "replace", "path": f"/{entity_id}", "value": after}]
         else:
             patch_list = [{"op": "add", "path": f"/{entity_id}", "value": after}]
-    elif op_type == 'd' and before.get(primary_key) is not None:
+    elif op_type == "d" and before.get(primary_key) is not None:
         entity_id = before[primary_key]
         cache_key = f"{entity_type}:{entity_id}"
         if cache_key in entity_cache:
             del entity_cache[cache_key]
         patch_list = [{"op": "remove", "path": f"/{entity_id}"}]
+
     if patch_list:
         return {"patch": patch_list, "entity_type": entity_type}
     return None
-
 
 def notify_opal(patch_data: Dict[str, Any], reason: str = "Debezium event -> incremental patch") -> bool:
     if not patch_data or 'patch' not in patch_data:
@@ -282,29 +365,41 @@ def process_message(message) -> None:
 
 def consume_kafka() -> None:
     stop_event = threading.Event()
+
     def signal_handler(sig, frame):
         stop_event.set()
-    all_topics = TOPICS.copy() if isinstance(TOPICS, list) else TOPICS.split(',')
-    rel_topic = 'EventNotifier.public.Devices_devices_roles'
-    if rel_topic not in all_topics:
-        all_topics.append(rel_topic)
+
+    # monta lista de tópicos iniciais
+    all_topics = TOPICS.copy() if isinstance(TOPICS, list) else TOPICS.split(",")
+
+    # garante que os relacionamentos de roles serão consumidos
+    rel_topics = [
+        "EventNotifier.public.Devices_devices_roles",
+        "EventNotifier.public.Employees_employees_roles",
+    ]
+    for rel in rel_topics:
+        if rel not in all_topics:
+            all_topics.append(rel)
+
     consumer = KafkaConsumer(
         *all_topics,
         bootstrap_servers=KAFKA_BROKER,
-        auto_offset_reset='earliest',
+        auto_offset_reset="earliest",
         enable_auto_commit=True,
         value_deserializer=safe_deserializer,
-        group_id=os.getenv("KAFKA_GROUP_ID","opal_consumer_group"),
+        group_id=os.getenv("KAFKA_GROUP_ID", "opal_consumer_group"),
         max_poll_interval_ms=300000,
         session_timeout_ms=30000,
-        heartbeat_interval_ms=10000
+        heartbeat_interval_ms=10000,
     )
+
     while not stop_event.is_set():
         messages = consumer.poll(timeout_ms=1000, max_records=10)
         for tp, msgs in messages.items():
             for message in msgs:
                 process_message(message)
         consumer.commit()
+
     consumer.close(autocommit=True)
 
 if __name__ == "__main__":

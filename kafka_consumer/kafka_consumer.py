@@ -41,7 +41,8 @@ devices_cache: Dict[int, Dict[str, Any]] = {}
 employee_roles_cache = TTLCache(maxsize=CACHE_MAX_SIZE, ttl=CACHE_TTL_SECONDS)
 # Para armazenar estado completo de cada employee vindo de Debezium
 employees_cache: Dict[int, Dict[str, Any]] = {}
-
+# no topo, junto com os outros caches
+employee_devices_cache = TTLCache(maxsize=CACHE_MAX_SIZE, ttl=CACHE_TTL_SECONDS)
 
 def exponential_backoff(retry_count: int, base_delay: int = RETRY_DELAY_SECONDS) -> int:
     """
@@ -81,15 +82,40 @@ def safe_deserializer(x: bytes) -> Optional[Dict[str, Any]]:
 
 
 def determine_entity_type(topic: str) -> str:
-    if "Devices_devices" in topic and "Devices_devices_roles" not in topic:
-        return "devices"
-    elif "Devices_devices_roles" in topic:
+    if "Devices_devices_roles" in topic:
         return "devices_roles"
-    elif "Employees_employees" in topic and "Employees_employees_roles" not in topic:
-        return "employees"
-    elif "Employees_employees_roles" in topic:
+    if "Devices_devices" in topic:
+        return "devices"
+    if "Employees_employees_roles" in topic:
         return "employees_roles"
+    if "Employees_employees_devices" in topic:        # <<< aqui
+        return "employees_devices"
+    if "Employees_employees" in topic:
+        return "employees"
     return "unknown"
+
+def process_employee_device_event(event: Dict[str, Any]) -> None:
+    payload = event.get("payload", {})
+    op = payload.get("op")
+    if op in ("c", "u"):
+        after = payload["after"]
+        emp_id = after.get("employees_id")
+        dev_id = after.get("devices_id")
+        if emp_id and dev_id:
+            employee_devices_cache.setdefault(emp_id, set()).add(dev_id)
+            logger.info(f"✅ Adicionado device {dev_id} ao employee {emp_id}")
+            threading.Timer(1.0, update_employee_in_opal, args=[emp_id]).start()
+    elif op == "d":
+        before = payload["before"]
+        emp_id = before.get("employees_id")
+        dev_id = before.get("devices_id")
+        if emp_id and dev_id and dev_id in employee_devices_cache.get(emp_id, set()):
+            employee_devices_cache[emp_id].remove(dev_id)
+            logger.info(f"✅ Removido device {dev_id} do employee {emp_id}")
+            threading.Timer(1.0, update_employee_in_opal, args=[emp_id]).start()
+
+def fetch_employee_devices(emp_id: int) -> List[int]:
+    return list(employee_devices_cache.get(emp_id, []))
 
 def process_employee_role_event(event: Dict[str, Any]) -> None:
     if not validate_event(event):
@@ -119,18 +145,32 @@ def fetch_employee_roles(emp_id: int) -> List[int]:
     return list(employee_roles_cache.get(emp_id, []))
 
 def update_employee_in_opal(emp_id: int) -> None:
+    """
+    Envia um patch para o OPAL contendo tanto as roles quanto os devices
+    associados ao employee.
+    """
     try:
+        # pega o estado completo do employee
         emp_data = employees_cache.get(emp_id)
         if not emp_data:
             logger.warning(f"⚠️ Estado de employee {emp_id} não está em cache, pulando update")
             return
 
+        # busca as listas mais atuais de roles e devices
         roles = fetch_employee_roles(emp_id)
+        devices = fetch_employee_devices(emp_id)
+
+        # monta o body do patch
         data = emp_data.copy()
         data["roles"] = roles
-        logger.info(f"✅ Preparando patch para employee {emp_id} com roles: {roles}")
+        data["devices"] = devices
 
-        # AQUI VOCÊ ESCOLHE ADD vs REPLACE
+        logger.info(
+            f"✅ Preparando patch para employee {emp_id} com "
+            f"{len(roles)} roles e {len(devices)} devices"
+        )
+
+        # decide se vai adicionar ou substituir
         if does_entity_exist_in_opa(emp_id, "employees"):
             op_type = "replace"
         else:
@@ -142,10 +182,12 @@ def update_employee_in_opal(emp_id: int) -> None:
             "value": data
         }]
 
+        # notifica o servidor OPAL
         notify_opal(
             {"patch": patch, "entity_type": "employees"},
-            reason=f"OPAL Patch: {op_type.upper()} employee {emp_id} roles - Automatic update"
+            reason=f"OPAL Patch: {op_type.upper()} employee {emp_id} (roles + devices)"
         )
+
     except Exception as e:
         logger.error(f"❌ Erro ao atualizar employee {emp_id} no OPAL: {e}")
 
@@ -262,6 +304,9 @@ def build_patch_from_event(event: Dict[str, Any], topic: str) -> Optional[Dict[s
     if entity_type == "employees_roles":
         process_employee_role_event(event)
         return None
+    if entity_type == "employees_devices":
+        process_employee_device_event(event)
+        return None
 
     # injeta roles em devices
     if entity_type == "devices" and op_type in ("c", "u"):
@@ -274,12 +319,14 @@ def build_patch_from_event(event: Dict[str, Any], topic: str) -> Optional[Dict[s
 
     # injeta roles em employees
     if entity_type == "employees" and op_type in ("c", "u"):
-        emp_id = after.get(primary_key)
+        emp_id = after.get("id")
         if emp_id is not None:
             employees_cache[emp_id] = after.copy()
-            roles = fetch_employee_roles(emp_id)
-            after["roles"] = roles
-            logger.info(f"✅ Adicionadas {len(roles)} roles ao employee {emp_id}")
+            # injeta roles
+            after["roles"]   = fetch_employee_roles(emp_id)
+            # injeta devices
+            after["devices"] = fetch_employee_devices(emp_id)
+            logger.info(f"✅ Employee {emp_id} com {len(after['roles'])} roles e {len(after['devices'])} devices")
 
     # monta a lista de operações PATCH/ADD/REMOVE
     patch_list = None
@@ -376,7 +423,9 @@ def consume_kafka() -> None:
     rel_topics = [
         "EventNotifier.public.Devices_devices_roles",
         "EventNotifier.public.Employees_employees_roles",
+        "EventNotifier.public.Employees_employees_devices",  # <<< aqui
     ]
+
     for rel in rel_topics:
         if rel not in all_topics:
             all_topics.append(rel)

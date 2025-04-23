@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from kafka import KafkaConsumer
 from kafka.errors import NoBrokersAvailable
-from requests.exceptions import RequestException, ConnectionError, Timeout
+from requests.exceptions import ConnectionError, Timeout
 from cachetools import TTLCache
 
 # Configuração de logging
@@ -29,9 +29,12 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "5"))
 RETRY_DELAY_SECONDS = int(os.getenv("RETRY_DELAY_SECONDS", "5"))
 CACHE_MAX_SIZE = int(os.getenv("CACHE_MAX_SIZE", "1000"))
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "300"))  # 5 minutos
+API_BASE_URL = os.getenv("API_BASE_URL", "http://host.docker.internal:8000")
 
 # Cache para armazenar os IDs já verificados no OPA
 entity_cache = TTLCache(maxsize=CACHE_MAX_SIZE, ttl=CACHE_TTL_SECONDS)
+# Cache para armazenar relações de device-roles
+device_roles_cache = TTLCache(maxsize=CACHE_MAX_SIZE, ttl=CACHE_TTL_SECONDS)
 
 def exponential_backoff(retry_count: int, base_delay: int = RETRY_DELAY_SECONDS) -> int:
     """
@@ -76,9 +79,140 @@ def determine_entity_type(topic: str) -> str:
     """
     Determina o tipo de entidade com base no tópico Kafka
     """
-    if "Devices_devices" in topic:
+    if "Devices_devices" in topic and "Devices_devices_roles" not in topic:
         return "devices"
+    elif "Devices_devices_roles" in topic:
+        return "devices_roles"
     return "employees"  # Valor padrão
+
+def process_device_role_event(event: Dict[str, Any]) -> None:
+    """
+    Processa eventos da tabela de relacionamento Devices_devices_roles
+    e atualiza o cache local e o OPAL
+    """
+    if not validate_event(event):
+        return
+    
+    payload = event.get("payload", {})
+    op_type = payload.get("op")
+    
+    if op_type == "c" or op_type == "u":  # CREATE ou UPDATE
+        after = payload.get("after", {})
+        if not after:
+            return
+        
+        device_id = after.get("devices_id")  # Corrigido de device_id para devices_id
+        role_id = after.get("role_id")
+        
+        if not device_id or not role_id:
+            logger.warning(f"⚠️ Evento devices_roles sem device_id ou role_id válidos: {after}")
+            return
+        
+        # Adicionar ao cache
+        if device_id not in device_roles_cache:
+            device_roles_cache[device_id] = set()
+        
+        device_roles_cache[device_id].add(role_id)
+        logger.info(f"✅ Adicionada role {role_id} ao device {device_id} no cache")
+        
+        # Atualizar a entidade no OPAL com um pequeno delay para garantir que todos os roles sejam processados
+        threading.Timer(1.0, update_device_in_opal, args=[device_id]).start()
+        
+    elif op_type == "d":  # DELETE
+        before = payload.get("before", {})
+        if not before:
+            return
+        
+        device_id = before.get("devices_id")  # Corrigido de device_id para devices_id
+        role_id = before.get("role_id")
+        
+        if not device_id or not role_id:
+            logger.warning(f"⚠️ Evento devices_roles DELETE sem device_id ou role_id válidos: {before}")
+            return
+        
+        # Remover do cache
+        if device_id in device_roles_cache and role_id in device_roles_cache[device_id]:
+            device_roles_cache[device_id].remove(role_id)
+            logger.info(f"✅ Removida role {role_id} do device {device_id} no cache")
+            
+            # Atualizar a entidade no OPAL
+            threading.Timer(1.0, update_device_in_opal, args=[device_id]).start()
+
+def update_device_in_opal(device_id: int) -> None:
+    """
+    Força uma atualização do dispositivo no OPAL com as roles atualizadas
+    """
+    try:
+        # Buscar os dados atuais do dispositivo
+        device_url = f"{API_BASE_URL}/devices/{device_id}/"
+        response = requests.get(device_url, timeout=5)
+        
+        if response.status_code != 200:
+            logger.warning(f"⚠️ Não foi possível obter dados do device {device_id}: {response.status_code}")
+            return
+        
+        device_data = response.json()
+        
+        # Adicionar as roles do cache ao dispositivo
+        roles = list(device_roles_cache.get(device_id, set()))
+        device_data["roles"] = roles
+        
+        logger.info(f"✅ Atualizando device {device_id} no OPAL com roles: {roles}")
+        
+        # Criar o patch para o OPAL
+        patch = [{
+            "op": "replace",
+            "path": f"/{device_id}",
+            "value": device_data
+        }]
+        
+        patch_data = {
+            "patch": patch,
+            "entity_type": "devices"
+        }
+        
+        # Notificar o OPAL
+        reason = f"OPAL Patch: UPDATE device {device_id} roles - Automatic update"
+        notify_opal(patch_data, reason=reason)
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao atualizar device {device_id} no OPAL: {e}")
+
+def fetch_device_roles(device_id: int) -> List[int]:
+    """
+    Busca as roles associadas a um dispositivo específico
+    Primeiro tenta o cache local, depois a API
+    """
+    # Verificar no cache primeiro
+    if device_id in device_roles_cache:
+        roles = list(device_roles_cache[device_id])
+        logger.info(f"📋 Roles encontradas no cache para device {device_id}: {roles}")
+        return roles
+    
+    # Se não estiver no cache, buscar via API
+    api_url = f"{API_BASE_URL}/devices/{device_id}/roles/"
+    
+    try:
+        response = requests.get(api_url, timeout=5)
+        if response.status_code == 200:
+            # Assumindo que a API retorna um JSON com as roles
+            roles_data = response.json()
+            logger.debug(f"API retornou para device {device_id}: {roles_data}")
+            
+            # Extraindo apenas os IDs das roles
+            role_ids = [role['role_id'] for role in roles_data]
+            
+            # Atualizar o cache
+            device_roles_cache[device_id] = set(role_ids)
+            
+            logger.info(f"📋 Roles encontradas via API para device {device_id}: {role_ids}")
+            return role_ids
+        else:
+            logger.warning(f"⚠️ Erro ao buscar roles para device {device_id}: {response.status_code}")
+            return []
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar roles para device {device_id}: {e}")
+        return []
 
 def does_entity_exist_in_opa(entity_id: str, entity_type: str) -> bool:
     """
@@ -182,11 +316,26 @@ def build_patch_from_event(event: Dict[str, Any], topic: str) -> Optional[Dict[s
     # Identificar qual entidade está sendo alterada com base no tópico
     entity_type = determine_entity_type(topic)
     
+    # Se for um evento da tabela de relacionamento devices_roles, processá-lo separadamente
+    if entity_type == "devices_roles":
+        process_device_role_event(event)
+        return None
+    
     # Garante que estamos lidando com objetos válidos
     if not isinstance(after, dict) and not isinstance(before, dict):
         logger.error("❌ Dados 'after' e 'before' inválidos")
         return None
 
+    # Para dispositivos, precisamos enriquecer os dados com as roles
+    if entity_type == "devices" and op_type in ["c", "u"]:
+        device_id = after.get(primary_key)
+        if device_id:
+            # Buscar as roles deste dispositivo
+            roles = fetch_device_roles(device_id)
+            # Adicionar as roles ao objeto do dispositivo
+            after["roles"] = roles
+            logger.info(f"✅ Adicionadas {len(roles)} roles ao device {device_id}")
+    
     patch_list = None
     
     if op_type == "c":  # CREATE
@@ -326,6 +475,12 @@ def process_message(message):
     logger.info(f"📥 Novo evento recebido no tópico {topic}")
     logger.debug(f"Conteúdo do evento: {json.dumps(event, indent=2)}")
     
+    # Se o tópico for relacionado à tabela de relacionamento devices_roles
+    entity_type = determine_entity_type(topic)
+    if entity_type == "devices_roles":
+        process_device_role_event(event)
+        return
+    
     patch_data = build_patch_from_event(event, topic)
     if patch_data:
         op = event.get('payload', {}).get('op')
@@ -373,8 +528,15 @@ def consume_kafka():
     # signal.signal(signal.SIGINT, signal_handler)
     
     try:
+        # Precisamos adicionar o tópico para a tabela de relacionamento
+        all_topics = TOPICS.copy() if isinstance(TOPICS, list) else TOPICS.split(",")
+        related_topic = "EventNotifier.public.Devices_devices_roles"
+        if related_topic not in all_topics:
+            all_topics.append(related_topic)
+            logger.info(f"➕ Adicionado tópico de relacionamento devices_roles: {all_topics}")
+        
         consumer = KafkaConsumer(
-            *TOPICS,
+            *all_topics,
             bootstrap_servers=KAFKA_BROKER,
             auto_offset_reset='earliest',
             enable_auto_commit=True,
@@ -385,7 +547,7 @@ def consume_kafka():
             heartbeat_interval_ms=10000   # 10 segundos
         )
         
-        logger.info(f"🎧 Escutando eventos nos tópicos: {TOPICS}")
+        logger.info(f"🎧 Escutando eventos nos tópicos: {all_topics}")
         
         # Thread para graceful shutdown
         shutdown_thread = threading.Thread(
@@ -418,10 +580,60 @@ def consume_kafka():
             logger.info("🛑 Fechando consumer...")
             consumer.close(autocommit=True)
 
+def load_initial_device_roles():
+    """
+    Carrega os dados iniciais de relacionamento entre devices e roles
+    """
+    try:
+        # API para listar todos os dispositivos
+        devices_url = f"{API_BASE_URL}/devices/"
+        devices_response = requests.get(devices_url, timeout=10)
+        
+        if devices_response.status_code != 200:
+            logger.warning(f"⚠️ Não foi possível carregar a lista de dispositivos: {devices_response.status_code}")
+            return
+        
+        devices = devices_response.json()
+        logger.info(f"📋 Carregando roles para {len(devices)} dispositivos...")
+        
+        for device in devices:
+            device_id = device.get("id")
+            if device_id:
+                roles = fetch_device_roles(device_id)
+                logger.info(f"📋 Device {device_id}: {len(roles)} roles carregadas")
+                
+                # Atualizar o OPAL para cada dispositivo carregado inicialmente
+                if roles:
+                    # Adicionar roles ao device
+                    device["roles"] = roles
+                    
+                    # Criar patch para o OPAL
+                    patch = [{
+                        "op": "replace",
+                        "path": f"/{device_id}",
+                        "value": device
+                    }]
+                    
+                    patch_data = {
+                        "patch": patch,
+                        "entity_type": "devices"
+                    }
+                    
+                    # Notificar o OPAL
+                    reason = f"OPAL Patch: INIT device {device_id} roles - Initial load"
+                    notify_opal(patch_data, reason=reason)
+    
+    except Exception as e:
+        logger.error(f"❌ Erro ao carregar dados iniciais de devices_roles: {e}")
+
 if __name__ == "__main__":
     logger.info("🚀 Iniciando Kafka Consumer para OPAL")
     
     try:
+        # Carregar relacionamentos iniciais
+        logger.info("📋 Carregando dados iniciais de devices_roles...")
+        load_initial_device_roles()
+        
         wait_for_kafka(KAFKA_BROKER)
         consume_kafka()
     except Exception as e:

@@ -147,30 +147,33 @@ def fetch_employee_roles(emp_id: int) -> List[int]:
 def update_employee_in_opal(emp_id: int) -> None:
     """
     Envia um patch para o OPAL contendo tanto as roles quanto os devices
-    associados ao employee.
+    associados ao employee, filtrando campos sensíveis.
     """
     try:
-        # pega o estado completo do employee
         emp_data = employees_cache.get(emp_id)
         if not emp_data:
             logger.warning(f"⚠️ Estado de employee {emp_id} não está em cache, pulando update")
             return
 
-        # busca as listas mais atuais de roles e devices
         roles = fetch_employee_roles(emp_id)
         devices = fetch_employee_devices(emp_id)
-
-        # monta o body do patch
         data = emp_data.copy()
         data["roles"] = roles
         data["devices"] = devices
 
+        # Remove campos indesejados
+        campos_remover = [
+            "password", "date_joined", "first_name",
+            "is_staff", "is_superuser", "last_name"
+        ]
+        for campo in campos_remover:
+            data.pop(campo, None)  # remove se existir, ignora se não tiver
+
         logger.info(
             f"✅ Preparando patch para employee {emp_id} com "
-            f"{len(roles)} roles e {len(devices)} devices"
+            f"{len(roles)} roles e {len(devices)} devices (campos filtrados)"
         )
 
-        # decide se vai adicionar ou substituir
         if does_entity_exist_in_opa(emp_id, "employees"):
             op_type = "replace"
         else:
@@ -181,13 +184,10 @@ def update_employee_in_opal(emp_id: int) -> None:
             "path": f"/{emp_id}",
             "value": data
         }]
-
-        # notifica o servidor OPAL
         notify_opal(
             {"patch": patch, "entity_type": "employees"},
             reason=f"OPAL Patch: {op_type.upper()} employee {emp_id} (roles + devices)"
         )
-
     except Exception as e:
         logger.error(f"❌ Erro ao atualizar employee {emp_id} no OPAL: {e}")
 

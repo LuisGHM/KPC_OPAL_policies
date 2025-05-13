@@ -46,7 +46,7 @@ cd room-access-control
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r kafka_consumer/requirements.txt
+pip install -r requirements.txt
 ```
 
 ### 3. Generate secure tokens

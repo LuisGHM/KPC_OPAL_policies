@@ -32,7 +32,7 @@ The system consists of the following components:
 - Python 3.9+ (for local development)
 - PostgreSQL (for local development)
 
-## Installation
+## Installation Guide
 
 ### 1. Clone the repository
 
@@ -41,7 +41,25 @@ git clone https://github.com/yourusername/room-access-control.git
 cd room-access-control
 ```
 
-### 2. Create an environment file
+### 2. Set up a virtual environment and install requirements
+
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r kafka_consumer/requirements.txt
+```
+
+### 3. Generate secure tokens
+
+You'll need to generate secure tokens for OPAL authentication. Use the following command to generate a random token:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Run this command multiple times to generate different tokens for each required authentication token.
+
+### 4. Create an environment file
 
 Create a `.env` file in the project root with the following variables:
 
@@ -55,12 +73,14 @@ OPAL_DATASOURCE_TOKEN=your-secure-datasource-token
 KAFKA_GROUP_ID=opal_consumer_group
 ```
 
-Replace the token values with secure random strings.
+Replace the token values with the secure random strings you generated.
 
-### 3. Start the services
+### 5. Start the services
+
+Use this command to build and start all containers:
 
 ```bash
-docker-compose up -d
+docker-compose up --build -d
 ```
 
 This will start all the necessary services:
@@ -70,7 +90,47 @@ This will start all the necessary services:
 - OPAL Client (ports 7766 and 8181)
 - Kafka Consumer
 
-### 4. Verify the installation
+### 6. Generate and configure additional tokens
+
+After the containers are running, you need to generate additional tokens for client and datasource authentication.
+
+#### Generate a client token:
+
+```bash
+curl -X POST http://localhost:7002/token \
+  -H "Authorization: Bearer your-secure-master-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "client",
+    "ttl": "24h",
+    "claims": {}
+  }'
+```
+
+Update the OPAL_CLIENT_TOKEN value in your .env file with the token returned.
+
+#### Generate a datasource token:
+
+```bash
+curl -X POST http://localhost:7002/token \
+  -H "Authorization: Bearer your-secure-master-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "datasource",
+    "ttl": "24h"
+  }'
+```
+
+Update the OPAL_DATASOURCE_TOKEN value in your .env file with the token returned.
+
+### 7. Restart the services to apply token changes
+
+```bash
+docker-compose down
+docker-compose up -d
+```
+
+### 8. Verify the installation
 
 Check if all services are running:
 
@@ -88,6 +148,14 @@ Verify OPA is accessible:
 
 ```bash
 curl http://localhost:8181/v1/data
+```
+
+### 9. Stopping the system
+
+To stop all services and remove volumes (which will clear all data):
+
+```bash
+docker-compose down -v
 ```
 
 ## Configuration

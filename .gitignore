@@ -4,3 +4,5 @@ http
 .env
 run.txt
 venv
+opal_auth_key
+opal_auth_key.pub

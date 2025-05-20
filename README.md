@@ -49,33 +49,50 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Generate secure tokens
+### 3. Generate RSA key pair for OPAL authentication
 
-You'll need to generate secure tokens for OPAL authentication. Use the following command to generate a random token:
+You need to generate an RSA key pair for OPAL server authentication:
+
+```bash
+ssh-keygen -t rsa -b 4096 -m PEM -f "./opal_auth_key"
+```
+
+This will create two files in your current directory:
+- `opal_auth_key` (private key)
+- `opal_auth_key.pub` (public key)
+
+Make sure these files have appropriate permissions:
+
+```bash
+chmod 600 opal_auth_key
+chmod 644 opal_auth_key.pub
+```
+
+### 4. Generate secure master token
+
+You'll need to generate a secure token for OPAL master authentication. Use the following command to generate a random token:
 
 ```bash
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Run this command multiple times to generate different tokens for each required authentication token.
-
-### 4. Create an environment file
+### 5. Create an environment file
 
 Create a `.env` file in the project root with the following variables:
 
 ```
 # OPAL Authentication
 OPAL_AUTH_MASTER_TOKEN=your-secure-master-token
-OPAL_CLIENT_TOKEN=your-secure-client-token
-OPAL_DATASOURCE_TOKEN=your-secure-datasource-token
+OPAL_CLIENT_TOKEN=
+OPAL_DATASOURCE_TOKEN=
 
 # Kafka Configuration (optional)
 KAFKA_GROUP_ID=opal_consumer_group
 ```
 
-Replace the token values with the secure random strings you generated.
+Replace the master token value with the secure random string you generated. You'll fill in the client and datasource tokens after starting the services.
 
-### 5. Start the services
+### 6. Start the services
 
 Use this command to build and start all containers:
 
@@ -90,9 +107,9 @@ This will start all the necessary services:
 - OPAL Client (ports 7766 and 8181)
 - Kafka Consumer
 
-### 6. Generate and configure additional tokens
+### 7. Generate client and datasource tokens
 
-After the containers are running, you need to generate additional tokens for client and datasource authentication.
+After the containers are running, you need to generate additional tokens for client and datasource authentication using the OPAL API.
 
 #### Generate a client token:
 
@@ -101,15 +118,26 @@ curl -X POST http://localhost:7002/token \
   -H "Authorization: Bearer your-secure-master-token" \
   -H "Content-Type: application/json" \
   -d '{
-    "type": "client",
-    "ttl": "24h",
-    "claims": {}
+    "type": "client"
   }'
 ```
 
-Update the OPAL_CLIENT_TOKEN value in your .env file with the token returned.
+The response will contain a token that you should add to your `.env` file as the `OPAL_CLIENT_TOKEN` value.
 
 #### Generate a datasource token:
+
+```bash
+curl -X POST http://localhost:7002/token \
+  -H "Authorization: Bearer your-secure-master-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "datasource"
+  }'
+```
+
+The response will contain a token that you should add to your `.env` file as the `OPAL_DATASOURCE_TOKEN` value.
+
+You can also optionally specify a TTL (time to live) for these tokens, for example:
 
 ```bash
 curl -X POST http://localhost:7002/token \
@@ -121,16 +149,14 @@ curl -X POST http://localhost:7002/token \
   }'
 ```
 
-Update the OPAL_DATASOURCE_TOKEN value in your .env file with the token returned.
-
-### 7. Restart the services to apply token changes
+### 8. Restart the services to apply token changes
 
 ```bash
 docker-compose down
 docker-compose up -d
 ```
 
-### 8. Verify the installation
+### 9. Verify the installation
 
 Check if all services are running:
 
@@ -150,7 +176,7 @@ Verify OPA is accessible:
 curl http://localhost:8181/v1/data
 ```
 
-### 9. Stopping the system
+### 10. Stopping the system
 
 To stop all services and remove volumes (which will clear all data):
 
@@ -242,6 +268,11 @@ curl -X POST http://localhost:8181/v1/data/access/allow -d '{
    - Check logs: `docker-compose logs kafka_consumer`
    - Verify Kafka connectivity
    - Check if OPAL server is accessible
+
+5. **Token generation errors**
+   - Make sure you're using the correct master token
+   - Verify OPAL Server is running
+   - Check the content type and format of your request
 
 ### Viewing Logs
 

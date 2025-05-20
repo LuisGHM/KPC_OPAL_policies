@@ -1,9 +1,11 @@
+version: "3.8"
+
 services:
   kafka:
     image: confluentinc/cp-kafka:latest
     container_name: opal11-kafka
     environment:
-      CLUSTER_ID: "manual"
+      CLUSTER_ID: "${CLUSTER_ID:-manual}"
       KAFKA_KRAFT_MODE: "true"
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: "broker,controller"
@@ -28,20 +30,16 @@ services:
       - |
         echo "[KAFKA INIT] Esperando volume estar disponível..."
         sleep 3
-
         echo "[KAFKA INIT] Conteúdo do volume:"
         ls -la /var/lib/kafka/data
-
         if [ ! -f /var/lib/kafka/data/.formatted ]; then
           echo "[KAFKA INIT] Volume ainda não formatado, criando cluster-id..."
-          CLUSTER_ID=$(kafka-storage random-uuid)
+          export CLUSTER_ID=$(kafka-storage random-uuid)
           echo "[KAFKA INIT] Gerado Cluster ID: $CLUSTER_ID"
-
           kafka-storage format \
             --cluster-id "$CLUSTER_ID" \
             --config /etc/kafka/kraft/server.properties \
             --ignore-formatted
-
           if [ $? -eq 0 ]; then
             echo "[KAFKA INIT] Kafka formatado com sucesso."
             touch /var/lib/kafka/data/.formatted
@@ -52,7 +50,6 @@ services:
         else
           echo "[KAFKA INIT] Kafka já formatado, seguindo com execução."
         fi
-
         exec /etc/confluent/docker/run
     healthcheck:
       test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
@@ -85,51 +82,54 @@ services:
   opal_server:
     image: permitio/opal-server:latest
     container_name: opal11-opal_server
+    env_file:
+      - .env
     environment:
-      OPAL_POLICY_REPO_MAIN_BRANCH: main
+      OPAL_POLICY_REPO_MAIN_BRANCH: "main"
       OPAL_POLICY_REPO_URL: "https://github.com/LuisGHM/KPC_OPAL_policies.git"
-      OPAL_POLICY_REPO_POLLING_INTERVAL: 30
+      OPAL_POLICY_REPO_POLLING_INTERVAL: "30"
       OPAL_BROADCAST_URI: "kafka://kafka:9092"
-
-      # ------------------- AUTH SETTINGS -------------------
-      OPAL_AUTH_PROVIDER: "preshared_key"
-      OPAL_SECURITY_ENABLED: "true"
-      OPAL_AUTH_MASTER_TOKEN: ${OPAL_AUTH_MASTER_TOKEN}
-
-      OPAL_LOG_FORMAT_INCLUDE_PID: "true"
-      OPAL_LOG_LEVEL: DEBUG
+      OPAL_AUTH_PRIVATE_KEY: "/app/opal_auth_key"
+      OPAL_AUTH_PUBLIC_KEY: "/app/opal_auth_key.pub"
+      OPAL_AUTH_MASTER_TOKEN: "${OPAL_AUTH_MASTER_TOKEN}"
+      OPAL_LOG_LEVEL: "DEBUG"
       OPAL_KAFKA_ENABLED: "true"
       OPAL_KAFKA_BROKER: "kafka:9092"
       OPAL_KAFKA_TOPICS: "EventNotifier.public.Employees_employees,EventNotifier.public.Devices_devices"
-
-      # Exemplo: carrega employees e devices de uma API local (pode ser Django, Flask, etc.)
       OPAL_DATA_CONFIG_SOURCES: >
         {"config":{"entries":[
-        {"url":"http://host.docker.internal:8000/employees/opal-data/","topics":["policy_data"],"dst_path":"/employees"},
-        {"url":"http://host.docker.internal:8000/devices/opal-data/","topics":["policy_data"],"dst_path":"/devices"}
+          {"url":"http://host.docker.internal:8000/employees/opal-data/","topics":["policy_data"],"dst_path":"/employees"},
+          {"url":"http://host.docker.internal:8000/devices/opal-data/","topics":["policy_data"],"dst_path":"/devices"}
         ]}}
-      UVICORN_NUM_WORKERS: 4
+      UVICORN_NUM_WORKERS: "4"
     ports:
       - "7002:7002"
+    volumes:
+      - ./opal_auth_key:/app/opal_auth_key:ro
+      - ./opal_auth_key.pub:/app/opal_auth_key.pub:ro
     networks:
       - opal_net
 
   opal_client:
     image: permitio/opal-client:latest
     container_name: opal11-opal_client
+    depends_on:
+      - opal_server
+    env_file:
+      - .env
     environment:
       OPAL_SERVER_URL: "http://opal_server:7002"
       OPAL_LOG_FORMAT_INCLUDE_PID: "true"
       OPAL_INLINE_OPA_LOG_FORMAT: "http"
-      OPAL_LOG_LEVEL: DEBUG
-      # Use seu client token (se necessário). Se não for usar token no client, pode remover
-      OPAL_CLIENT_TOKEN: ${OPAL_CLIENT_TOKEN}
+      OPAL_LOG_LEVEL: "DEBUG"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        ./wait-for.sh opal_server:7002 --timeout=20 -- ./start.sh
     ports:
       - "7766:7000"
       - "8181:8181"
-    depends_on:
-      - opal_server
-    entrypoint: ["sh", "-c", "./wait-for.sh opal_server:7002 --timeout=20 -- ./start.sh"]
     networks:
       - opal_net
 
@@ -139,12 +139,12 @@ services:
     depends_on:
       - kafka
     env_file:
-      - .env   # <-- isso carrega todas as variáveis do seu arquivo
+      - .env
     environment:
       KAFKA_BROKER: "kafka:9092"
       TOPICS: "EventNotifier.public.Employees_employees,EventNotifier.public.Devices_devices"
       OPAL_SERVER_URL: "http://opal_server:7002/data/config"
-      OPAL_DATASOURCE_TOKEN: ${OPAL_DATASOURCE_TOKEN}
+      OPAL_DATASOURCE_TOKEN: "${OPAL_DATASOURCE_TOKEN}"
     networks:
       - opal_net
 

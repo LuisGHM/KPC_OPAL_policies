@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   kafka:
     image: confluentinc/cp-kafka:latest
@@ -58,7 +56,6 @@ services:
       retries: 5
     networks:
       - opal_net
-
   debezium:
     image: quay.io/debezium/connect:3.0.0.Final
     container_name: opal11-debezium
@@ -78,6 +75,11 @@ services:
       - "8083:8083"
     networks:
       - opal_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   opal_server:
     image: permitio/opal-server:latest
@@ -137,14 +139,18 @@ services:
     build: ./kafka_consumer
     container_name: opal11-kafka_consumer
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+      debezium:
+        condition: service_healthy
     env_file:
       - .env
     environment:
-      KAFKA_BROKER: "kafka:9092"
-      TOPICS: "EventNotifier.public.Employees_employees,EventNotifier.public.Devices_devices"
-      OPAL_SERVER_URL: "http://opal_server:7002/data/config"
-      OPAL_DATASOURCE_TOKEN: "${OPAL_DATASOURCE_TOKEN}"
+      - KAFKA_BROKER=kafka:9092
+      - TOPICS=EventNotifier.public.Employees_employees,EventNotifier.public.Devices_devices
+      - KAFKA_GROUP_ID=opal_consumer_group      # ← agora definido
+      - OPAL_SERVER_URL=http://opal_server:7002/data/config
+      - OPAL_DATASOURCE_TOKEN=${OPAL_DATASOURCE_TOKEN}
     networks:
       - opal_net
 

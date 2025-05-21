@@ -50,27 +50,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Generate RSA key pair for OPAL authentication
-
-You need to generate an RSA key pair for OPAL server authentication:
-
-```bash
-ssh-keygen -t rsa -b 4096 -m PEM -f "./opal_auth_key"
-```
-
-This will create two files in your current directory:
-
-* `opal_auth_key` (private key)
-* `opal_auth_key.pub` (public key)
-
-Make sure these files have appropriate permissions:
-
-```bash
-chmod 600 opal_auth_key
-chmod 644 opal_auth_key.pub
-```
-
-### 4. Generate secure master token
+### 3. Generate secure master token
 
 You'll need to generate a secure token for OPAL master authentication. Use the following command to generate a random token:
 
@@ -78,7 +58,7 @@ You'll need to generate a secure token for OPAL master authentication. Use the f
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-### 5. Create an environment file
+### 4. Create an environment file
 
 Create a `.env` file in the project root with the following variables:
 
@@ -94,7 +74,7 @@ KAFKA_GROUP_ID=opal_consumer_group
 
 Replace the master token value with the secure random string you generated. You'll fill in the client and datasource tokens after starting the services.
 
-### 6. Start the services
+### 5. Start the services
 
 Use this command to build and start all containers:
 
@@ -110,56 +90,7 @@ This will start all the necessary services:
 * OPAL Client (ports 7766 and 8181)
 * Kafka Consumer
 
-### 7. Generate client and datasource tokens
-
-After the containers are running, you need to generate additional tokens for client and datasource authentication using the OPAL API.
-
-#### Generate a client token:
-
-```bash
-curl -X POST http://localhost:7002/token \
-  -H "Authorization: Bearer your-secure-master-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "client"
-  }'
-```
-
-The response will contain a token that you should add to your `.env` file as the `OPAL_CLIENT_TOKEN` value.
-
-#### Generate a datasource token:
-
-```bash
-curl -X POST http://localhost:7002/token \
-  -H "Authorization: Bearer your-secure-master-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "datasource"
-  }'
-```
-
-The response will contain a token that you should add to your `.env` file as the `OPAL_DATASOURCE_TOKEN` value.
-
-You can also optionally specify a TTL (time to live) for these tokens, for example:
-
-```bash
-curl -X POST http://localhost:7002/token \
-  -H "Authorization: Bearer your-secure-master-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "datasource",
-    "ttl": "24h"
-  }'
-```
-
-### 8. Restart the services to apply token changes
-
-```bash
-docker-compose down
-docker-compose up -d
-```
-
-### 9. Configure Debezium for CDC (Change Data Capture)
+### 6. Configure Debezium for CDC (Change Data Capture)
 
 Send a `POST` request to the Debezium API to register the PostgreSQL connector:
 
@@ -203,7 +134,42 @@ curl -X POST http://localhost:8083/connectors/ \
 
 After this, Debezium will emit change events to Kafka, and your system will update policies automatically.
 
-### 10. Verify the installation
+### 7. Configure PostgreSQL for Logical Decoding
+
+To allow Debezium to capture changes, you must set PostgreSQL’s `wal_level` to `logical`:
+
+1. **Locate the config file** in `psql`:
+
+   ```sql
+   SHOW config_file;
+   ```
+
+   Copy the path (e.g., `C:/Program Files/PostgreSQL/17/data/postgresql.conf`).
+
+2. **Edit** the file as Administrator in Notepad (or another editor):
+
+   ```conf
+   wal_level = logical
+   ```
+
+3. **Save** and close the file.
+
+4. **Restart** the PostgreSQL service as Administrator in PowerShell or CMD:
+
+   ```bash
+   net stop postgresql-x64-17
+   net start postgresql-x64-17
+   ```
+
+5. **Verify** in `psql`:
+
+   ```sql
+   SHOW wal_level;
+   ```
+
+   Should return `logical`.
+
+### 8. Verify the installation
 
 Check if all services are running:
 
@@ -221,14 +187,6 @@ Verify OPA is accessible:
 
 ```bash
 curl http://localhost:8181/v1/data
-```
-
-### 11. Stopping the system
-
-To stop all services and remove volumes (which will clear all data):
-
-```bash
-docker-compose down -v
 ```
 
 ## Configuration
@@ -305,8 +263,9 @@ curl -X POST http://localhost:8181/v1/data/access/allow -d '{
    * Verify network connectivity
    * Check logs: `docker-compose logs kafka`
 
-2. **OPAL Server connectivity issues**n   - Verify correct tokens in `.env`
+2. **OPAL Server connectivity issues**
 
+   * Verify correct tokens in `.env`
    * Check if the OPAL server is running
    * Check logs: `docker-compose logs opal_server`
 

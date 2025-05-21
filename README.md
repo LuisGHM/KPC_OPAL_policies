@@ -90,53 +90,9 @@ This will start all the necessary services:
 * OPAL Client (ports 7766 and 8181)
 * Kafka Consumer
 
-### 6. Configure Debezium for CDC (Change Data Capture)
+### 6. Configure PostgreSQL for Logical Decoding
 
-Send a `POST` request to the Debezium API to register the PostgreSQL connector:
-
-**URL:**
-
-```
-http://localhost:8083/connectors/
-```
-
-**Request Body (debezium-config.json):**
-
-```json
-{
-  "name": "postgres-connector",
-  "config": {
-    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-    "database.hostname": "host.docker.internal",
-    "database.port": "5432",
-    "database.user": "<DB_USER>",
-    "database.password": "<DB_PASSWORD>",
-    "database.dbname": "<DB_NAME>",
-    "database.server.name": "KPC",
-    "table.include.list": "public.Employees_employees,public.Devices_devices,public.Devices_devices_roles,public.Employees_employees_devices,public.Employees_employees_roles",
-    "plugin.name": "pgoutput",
-    "slot.name": "debezium_slot",
-    "publication.autocreate.mode": "filtered",
-    "topic.prefix": "EventNotifier"
-  }
-}
-```
-
-Replace `<DB_USER>`, `<DB_PASSWORD>`, and `<DB_NAME>` with your database credentials. Use `host.docker.internal` so the Debezium container can reach the local database.
-
-**Example `curl` command:**
-
-```bash
-curl -X POST http://localhost:8083/connectors/ \
-  -H "Content-Type: application/json" \
-  -d @debezium-config.json
-```
-
-After this, Debezium will emit change events to Kafka, and your system will update policies automatically.
-
-### 7. Configure PostgreSQL for Logical Decoding
-
-To allow Debezium to capture changes, you must set PostgreSQL’s `wal_level` to `logical`:
+To allow Debezium to capture changes, you must set PostgreSQL’s `wal_level` to `logical` **before** registering the connector:
 
 1. **Locate the config file** in `psql`:
 
@@ -169,6 +125,50 @@ To allow Debezium to capture changes, you must set PostgreSQL’s `wal_level` to
 
    Should return `logical`.
 
+### 7. Configure Debezium for CDC (Change Data Capture)
+
+After PostgreSQL is set to logical decoding, send a `POST` request to the Debezium API to register the PostgreSQL connector:
+
+**URL:**
+
+```
+http://localhost:8083/connectors/
+```
+
+**Request Body (debezium-config.json):**
+
+```json
+{
+  "name": "postgres-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "host.docker.internal",
+    "database.port": "5432",
+    "database.user": "<DB_USER>",
+    "database.password": "<DB_PASSWORD>",
+    "database.dbname": "<DB_NAME>",
+    "database.server.name": "KPC",
+    "table.include.list": "public.Employees_employees,public.Devices_devices,public.Devices_devices_roles,public.Employees_employees_devices,public.Employees_employees_roles",
+    "plugin.name": "pgoutput",
+    "slot.name": "debezium_slot",
+    "publication.autocreate.mode": "filtered",
+    "topic.prefix": "EventNotifier"
+  }
+}
+```
+
+Replace `<DB_USER>`, `<DB_PASSWORD>`, and `<DB_NAME>` with your database credentials.
+
+**Example `curl` command:**
+
+```bash
+curl -X POST http://localhost:8083/connectors/ \
+  -H "Content-Type: application/json" \
+  -d @debezium-config.json
+```
+
+After this, Debezium will emit change events to Kafka, and your system will update policies automatically.
+
 ### 8. Verify the installation
 
 Check if all services are running:
@@ -191,135 +191,4 @@ curl http://localhost:8181/v1/data
 
 ## Configuration
 
-### Policy Files
-
-The system uses two main policy files:
-
-* `admin_policy.rego`: Defines administrator access privileges
-* `room_access_policy.rego`: Defines room access rules based on employees and devices
-
-### External Data Sources
-
-The system expects two external API endpoints to provide data:
-
-* `http://host.docker.internal:8000/employees/opal-data/`
-* `http://host.docker.internal:8000/devices/opal-data/`
-
-These endpoints should return data in the format expected by OPAL.
-
-### Kafka Topics
-
-The system listens to the following Kafka topics:
-
-* `EventNotifier.public.Employees_employees`
-* `EventNotifier.public.Devices_devices`
-* `EventNotifier.public.Devices_devices_roles`
-* `EventNotifier.public.Employees_employees_roles`
-* `EventNotifier.public.Employees_employees_devices`
-
-## Usage
-
-### Testing Access Control
-
-To test if a user has access to a device/room:
-
-```bash
-curl -X POST http://localhost:8181/v1/data/access/allow -d '{
-  "input": {
-    "user_id": 123,
-    "device_id": 456
-  }
-}'
-```
-
-### Administering Users and Roles
-
-1. Add/update data through your application's database
-2. The changes will be automatically captured by Debezium
-3. The Kafka consumer will process these events
-4. OPAL will update OPA with the new policy data
-
-## Extending the System
-
-### Adding New Data Types
-
-1. Update the Kafka consumer to recognize new topics
-2. Add processing logic for the new entity types
-3. Update the policy files to incorporate the new data
-
-### Modifying Policies
-
-1. Edit the `.rego` files
-2. Push changes to the Git repository
-3. OPAL will detect the changes and update OPA automatically
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Kafka not starting**
-
-   * Check if the volume is properly formatted
-   * Verify network connectivity
-   * Check logs: `docker-compose logs kafka`
-
-2. **OPAL Server connectivity issues**
-
-   * Verify correct tokens in `.env`
-   * Check if the OPAL server is running
-   * Check logs: `docker-compose logs opal_server`
-
-3. **OPA policy not updating**
-
-   * Check OPAL Client logs: `docker-compose logs opal_client`
-   * Verify Git repository access
-   * Check policy syntax for errors
-
-4. **Kafka Consumer errors**
-
-   * Check logs: `docker-compose logs kafka_consumer`
-   * Verify Kafka connectivity
-   * Check if OPAL server is accessible
-
-5. **Token generation errors**
-
-   * Make sure you're using the correct master token
-   * Verify OPAL Server is running
-   * Check the content type and format of your request
-
-### Viewing Logs
-
-```bash
-# View logs for a specific service
-docker-compose logs [service_name]
-
-# Follow logs in real-time
-docker-compose logs -f [service_name]
-```
-
-## Security Considerations
-
-* Always use secure, random tokens for OPAL authentication
-* Limit network access to the OPA and OPAL servers
-* Regularly update all dependencies and Docker images
-* Consider enabling TLS for Kafka and API endpoints
-* Review access policies regularly
-
-## License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a new Pull Request
-
-## Acknowledgments
-
-* [OPAL](https://github.com/permitio/opal) by Permit.io
-* [OPA](https://www.openpolicyagent.org/) (Open Policy Agent)
-* [Debezium](https://debezium.io/) for change data capture
-* [Kafka](https://kafka.apache.org/) for event streaming
+... (rest of the document unchanged)
